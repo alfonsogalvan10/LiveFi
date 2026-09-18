@@ -34,7 +34,9 @@ done
 ok "PostgreSQL ready"
 
 step "Waiting for Kafka"
-until docker compose exec -T kafka kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; do
+# Kafka CLI tools are not on PATH in the official apache/kafka image.
+until docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+      --bootstrap-server localhost:9092 --list >/dev/null 2>&1; do
   sleep 3
 done
 ok "Kafka ready"

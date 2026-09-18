@@ -5,10 +5,19 @@ SHELL := /bin/bash
 COMPOSE := docker compose
 COMPOSE_OBS := docker compose -f docker-compose.yml -f docker-compose.observability.yml
 
+# The Kafka CLI tools are NOT on PATH inside the official apache/kafka image,
+# so every invocation must use the absolute path.
+KAFKA_BIN := /opt/kafka/bin
+
+# Default topic for the `watch` target. `watch` takes no arguments, which
+# avoids the class of mistake where a pasted `TOPIC=...` ends up on a
+# separate line and silently becomes an empty value.
+CDC_TOPIC ?= dbserver.public.trades
+
 .DEFAULT_GOAL := help
 .PHONY: help env up up-core up-observability up-frontend up-all down clean logs ps health \
         up-stage1 up-stage2 up-stage3 up-stage4 preflight mem ci \
-        token psql clickhouse redis topics consume connectors register-connector \
+        token psql sql count slot clickhouse redis topics init-topics watch consume connectors register-connector \
         seed lint test build
 
 help: ## Show this help
@@ -91,6 +100,15 @@ token: ## Fetch a dev JWT from Keycloak
 psql: ## Open a psql shell in the OLTP database
 	$(COMPOSE) exec postgres psql -U $${POSTGRES_USER:-livefi} -d $${POSTGRES_DB:-livefi}
 
+sql: ## Run one SQL query: make sql Q="SELECT count(*) FROM trades;"
+	@$(COMPOSE) exec -T postgres psql -U $${POSTGRES_USER:-livefi} -d $${POSTGRES_DB:-livefi} -c "$(Q)"
+
+count: ## Count rows in the trades table (one-line output)
+	@$(COMPOSE) exec -T postgres psql -U $${POSTGRES_USER:-livefi} -d $${POSTGRES_DB:-livefi} -tAc "SELECT count(*) AS trades FROM trades;"
+
+slot: ## Show the Debezium replication slot state
+	@$(COMPOSE) exec -T postgres psql -U $${POSTGRES_USER:-livefi} -d $${POSTGRES_DB:-livefi} -c "SELECT slot_name, active, plugin, database FROM pg_replication_slots;"
+
 clickhouse: ## Open clickhouse-client against the OLAP sink
 	$(COMPOSE) exec clickhouse clickhouse-client -u $${CLICKHOUSE_USER:-default} \
 	  --password $${CLICKHOUSE_PASSWORD:-change-me-clickhouse} -d $${CLICKHOUSE_DB:-livefi}
@@ -99,11 +117,20 @@ redis: ## Open redis-cli
 	$(COMPOSE) exec redis redis-cli
 
 topics: ## List Kafka topics
-	$(COMPOSE) exec kafka kafka-topics.sh --bootstrap-server localhost:9092 --list
+	$(COMPOSE) exec kafka $(KAFKA_BIN)/kafka-topics.sh --bootstrap-server localhost:9092 --list
 
-consume: ## Tail a topic: make consume TOPIC=dbserver.public.trades
-	$(COMPOSE) exec kafka kafka-console-consumer.sh \
-	  --bootstrap-server localhost:9092 --topic $(TOPIC) --from-beginning
+init-topics: ## Create the Kafka topics (idempotent — safe to re-run)
+	$(COMPOSE) exec -T kafka bash -s < infra/kafka/create-topics.sh
+
+watch: ## Tail the CDC trade stream — no arguments needed (Ctrl+C to stop)
+	@echo "Tailing topic: $(CDC_TOPIC)  (Ctrl+C to stop)"
+	@echo "Now POST a trade in another terminal to see it appear."
+	@echo ""
+	-$(COMPOSE) exec kafka $(KAFKA_BIN)/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic $(CDC_TOPIC) --from-beginning
+
+consume: ## Tail a specific topic: make consume TOPIC=dbserver.public.trades
+	@test -n "$(TOPIC)" || (echo "✗ TOPIC is empty — nothing to consume."; echo "  Either: make consume TOPIC=dbserver.public.trades"; echo "  Or just: make watch   (no arguments needed)"; exit 1)
+	-$(COMPOSE) exec kafka $(KAFKA_BIN)/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic $(TOPIC) --from-beginning
 
 connectors: ## List Debezium connectors and their status
 	@curl -sS http://localhost:8083/connectors?expand=status | jq

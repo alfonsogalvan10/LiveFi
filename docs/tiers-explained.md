@@ -501,6 +501,27 @@ make health
 
 `scripts/bootstrap.sh` handles this ordering automatically.
 
+### 8. Container images get removed — pin and verify
+
+Two images in the original scaffold stopped working, and neither was a mistake in our code:
+
+- **`bitnami/*` images were deleted from Docker Hub.** Bitnami retired its free catalog in 2025. Kafka now uses the official `apache/kafka` image. The env var convention also changed — `apache/kafka` maps `KAFKA_*` straight onto `server.properties` (`KAFKA_NODE_ID` → `node.id`), while Bitnami used a `KAFKA_CFG_*` prefix. A KRaft `CLUSTER_ID` is now required.
+- **Kafka's CLI tools are not on `PATH`** in the official image. Use `/opt/kafka/bin/kafka-topics.sh`.
+
+If `docker compose up` reports `not found` for an image, that image was almost certainly unpublished. Check what tags exist before assuming your compose file is wrong:
+
+```bash
+curl -s "https://hub.docker.com/v2/repositories/apache/kafka/tags?page_size=10" | jq -r '.results[].name'
+```
+
+This is a good habit in general — pinning by tag is not a guarantee the tag will exist forever.
+
+### 9. Two more failures worth knowing about
+
+**PostgreSQL replication settings** must be passed via `command`, not `POSTGRES_INITDB_ARGS`. The latter accepts only `initdb` flags, and `-c` is a *server* flag — so the container restart-loops with `initdb: unrecognized option: c`.
+
+**Python 3.12 images ship no `setuptools`**, and setuptools 84 removed `pkg_resources` entirely. OpenTelemetry `instrumentation` 0.46b0 imports `pkg_resources` at module load, so the service crashed with `ModuleNotFoundError`. This is why requirements pin **OpenTelemetry >= 1.31.0 / 0.52b0** — those versions use `importlib.metadata` instead. Installing `setuptools` is not a fix; modern setuptools no longer contains `pkg_resources`.
+
 ---
 
 ## Related Documents

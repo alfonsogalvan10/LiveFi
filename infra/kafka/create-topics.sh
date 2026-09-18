@@ -8,6 +8,9 @@ BROKER="${KAFKA_BROKER:-localhost:9092}"
 PARTITIONS="${KAFKA_PARTITIONS:-3}"
 RF="${KAFKA_REPLICATION_FACTOR:-1}"
 
+# Not on PATH in the official apache/kafka image.
+KAFKA_TOPICS="${KAFKA_BIN:-/opt/kafka/bin}/kafka-topics.sh"
+
 TOPICS=(
   "dbserver.public.trades"
   "dbserver.public.risk_snapshots"
@@ -18,10 +21,10 @@ TOPICS=(
 )
 
 for topic in "${TOPICS[@]}"; do
-  if kafka-topics.sh --bootstrap-server "$BROKER" --list 2>/dev/null | grep -qx "$topic"; then
+  if $KAFKA_TOPICS --bootstrap-server "$BROKER" --list 2>/dev/null | grep -qx "$topic"; then
     echo "= exists: $topic"
   else
-    kafka-topics.sh --bootstrap-server "$BROKER" \
+    $KAFKA_TOPICS --bootstrap-server "$BROKER" \
       --create --topic "$topic" \
       --partitions "$PARTITIONS" \
       --replication-factor "$RF" \
@@ -32,4 +35,4 @@ done
 
 echo
 echo "Current topics:"
-kafka-topics.sh --bootstrap-server "$BROKER" --list
+$KAFKA_TOPICS --bootstrap-server "$BROKER" --list

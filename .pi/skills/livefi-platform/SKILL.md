@@ -193,6 +193,15 @@ Helper commands: `make mem` (per-container usage), `make psql`, `make clickhouse
 
 ### Toolchain constraints worth knowing
 
+**Container images are not forever.** Two broke during initial setup:
+
+- **`bitnami/*` images were removed from Docker Hub.** Bitnami retired its free catalog. Kafka now uses the official **`apache/kafka`** image. Note the env var convention changed: `apache/kafka` maps `KAFKA_*` directly onto `server.properties` (`KAFKA_NODE_ID` → `node.id`), whereas Bitnami used a `KAFKA_CFG_*` prefix. A KRaft `CLUSTER_ID` is required.
+- **Kafka CLI tools are NOT on PATH** in the official image. Always use absolute paths: `/opt/kafka/bin/kafka-topics.sh`. This is why `KAFKA_BIN` exists in the Makefile.
+
+**PostgreSQL replication settings must use `command`, not `POSTGRES_INITDB_ARGS`.** The latter accepts only `initdb` flags; `-c` is a *server* flag, so passing it makes the container restart-loop with `initdb: unrecognized option: c`.
+
+**Python 3.12 images have no `setuptools`, and setuptools 84 removed `pkg_resources`.** OpenTelemetry `instrumentation` 0.46b0 imports `pkg_resources` at module load, so the container crashed with `ModuleNotFoundError`. Fixed by requiring **OpenTelemetry >= 1.31.0 / 0.52b0**, which uses `importlib.metadata`. Do not downgrade below that, and do not try to fix it by installing `setuptools`.
+
 - **pnpm is pinned** via `packageManager` in `frontend/package.json` and mirrored in CI. A mismatch between the pnpm that generated `pnpm-lock.yaml` and the one CI uses breaks `--frozen-lockfile`.
 - **pnpm 10+ blocks postinstall scripts** by default. Packages needing native builds must be approved in `frontend/pnpm-workspace.yaml` under `allowBuilds`. `pnpm install` fails with `ERR_PNPM_IGNORED_BUILDS` otherwise. Use `pnpm approve-builds` rather than hand-editing.
 - **Both Python services pin the same ruff rule set** in their own `pyproject.toml`. These are duplicated deliberately (each service stays independently buildable) — keep them in sync.

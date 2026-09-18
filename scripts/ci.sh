@@ -43,16 +43,26 @@ if [ "${SKIP_PYTHON:-0}" != "1" ]; then
     for service in ingestion-api query-api; do
       step "Python: $service  (interpreter: $PYTHON)"
       VENV=".venv-ci/$service"
+      STAMP="$VENV/.requirements.sha"
+      REQ_HASH=$(shasum -a 256 "services/$service/requirements.txt" | cut -d' ' -f1)
+      CURRENT_HASH=""
+      [ -f "$STAMP" ] && CURRENT_HASH=$(cat "$STAMP")
 
-      if [ ! -x "$VENV/bin/pytest" ]; then
-        echo "    first run — creating venv and installing dependencies..."
-        if ! "$PYTHON" -m venv "$VENV" >/dev/null 2>&1; then
-          fail "$service: venv creation"; continue
+      # Reinstall when the venv is missing OR requirements.txt changed.
+      # Without the hash check, an edited requirements.txt silently keeps
+      # using stale packages and CI disagrees with your local result.
+      if [ ! -x "$VENV/bin/pytest" ] || [ "$CURRENT_HASH" != "$REQ_HASH" ]; then
+        echo "    setting up venv (dependencies changed or first run)..."
+        if [ ! -x "$VENV/bin/pytest" ]; then
+          if ! "$PYTHON" -m venv "$VENV" >/dev/null 2>&1; then
+            fail "$service: venv creation"; continue
+          fi
         fi
         "$VENV/bin/pip" install -q --upgrade pip >/dev/null 2>&1
         if ! "$VENV/bin/pip" install -q -r "services/$service/requirements.txt" >/dev/null 2>&1; then
           fail "$service: dependency install"; continue
         fi
+        echo "$REQ_HASH" > "$STAMP"
       fi
 
       if ( cd "services/$service" && "../../$VENV/bin/ruff" check . ); then
