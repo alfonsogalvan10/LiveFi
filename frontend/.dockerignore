@@ -1,0 +1,23 @@
+.git
+.gitignore
+.gitattributes
+.env
+.env.*
+*.env
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
+.vercel
+
+# Keep the image small; docs aren't needed at runtime
+*.md
+.vscode/
+.idea/
+.DS_Store
+.github/

@@ -1,0 +1,16 @@
+[project]
+name = "livefi-ingestion-api"
+version = "0.1.0"
+description = "LiveFi ingestion microservice — validates and persists trades to PostgreSQL"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

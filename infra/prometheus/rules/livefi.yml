@@ -1,0 +1,58 @@
+# ============================================================
+# Prometheus alert rules — LiveFi SLOs
+# ============================================================
+groups:
+  - name: livefi-pipeline
+    rules:
+      - alert: KafkaConsumerLagHigh
+        expr: kafka_consumergroup_lag > 10000
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Kafka consumer lag high ({{ $labels.consumergroup }})"
+          description: "Lag is {{ $value }} messages on topic {{ $labels.topic }}."
+
+      - alert: PostgresReplicationSlotLag
+        expr: pg_replication_slots_pg_wal_lsn_diff > 1073741824
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "PostgreSQL replication slot lag > 1GB"
+          description: "Debezium may have stalled; WAL is accumulating on disk."
+
+      - alert: FlinkCheckpointFailing
+        expr: increase(flink_jobmanager_job_numberOfFailedCheckpoints[15m]) > 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Flink checkpoints are failing"
+
+  - name: livefi-api
+    rules:
+      - alert: IngestApiHighLatency
+        expr: histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job="ingestion-api"}[5m])) by (le)) > 0.5
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Ingestion API p99 latency > 500ms"
+
+      - alert: ApiHighErrorRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.01
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "API 5xx error rate above 1%"
+
+      - alert: QueryCacheHitRatioLow
+        expr: sum(rate(redis_keyspace_hits_total[5m])) / (sum(rate(redis_keyspace_hits_total[5m])) + sum(rate(redis_keyspace_misses_total[5m]))) < 0.5
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Redis cache hit ratio below 50%"
+
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }} is down"

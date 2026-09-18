@@ -1,0 +1,66 @@
+# ============================================================
+# LiveFi — observability tier (Tier 6)
+# Merge with the core stack:
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile core --profile observability up -d
+# ============================================================
+name: ${COMPOSE_PROJECT_NAME:-livefi}
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.100.0
+    profiles: [observability]
+    restart: unless-stopped
+    command: ["--config=/etc/otel/config.yml"]
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus exporter
+    volumes:
+      - ./infra/otel/otel-collector-config.yml:/etc/otel/config.yml:ro
+    networks: [livefi-net]
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    profiles: [observability]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/rules:/etc/prometheus/rules:ro
+    networks: [livefi-net]
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    profiles: [observability]
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+      - "14250:14250"
+    networks: [livefi-net]
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    profiles: [observability]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [prometheus, jaeger]
+    networks: [livefi-net]
+
+networks:
+  livefi-net:
+    driver: bridge

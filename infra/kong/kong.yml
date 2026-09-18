@@ -1,0 +1,82 @@
+# ============================================================
+# Kong declarative configuration (DB-less mode)
+# Single public entrypoint for the LiveFi platform.
+# ============================================================
+_format_version: "3.0"
+
+services:
+  # ---- Tier 3: ingestion (write path) ----
+  - name: ingestion-api
+    url: http://ingestion-api:8080
+    routes:
+      - name: trades-route
+        paths:
+          - /trades
+        methods: [POST, GET]
+        strip_path: false
+        plugins:
+          - name: jwt
+          - name: rate-limiting
+            config:
+              minute: 600
+              policy: local
+              limit_by: credential
+
+  # ---- Tier 5: query (read path) ----
+  - name: query-api
+    url: http://query-api:8080
+    routes:
+      - name: analytics-route
+        paths:
+          - /analytics
+        methods: [GET]
+        strip_path: false
+        plugins:
+          - name: jwt
+          - name: rate-limiting
+            config:
+              minute: 3000
+              policy: local
+              limit_by: credential
+      - name: ws-route
+        paths:
+          - /ws
+        protocols: [http, https, ws, wss]
+        strip_path: false
+        plugins:
+          - name: jwt
+
+  # ---- Public health (no auth) ----
+  - name: health
+    url: http://ingestion-api:8080
+    routes:
+      - name: health-route
+        paths:
+          - /healthz
+        strip_path: false
+
+consumers:
+  - username: livefi-web
+    jwt_secrets:
+      - key: livefi-web
+        algorithm: RS256
+        rsa_public_key: |
+          -----BEGIN PUBLIC KEY-----
+          # TODO: paste the realm RS256 public key from Keycloak
+          # Realm Settings -> Keys -> RS256 -> Public Key
+          -----END PUBLIC KEY-----
+
+plugins:
+  - name: correlation-id
+    config:
+      header_name: X-Request-ID
+      generator: uuid
+      echo_downstream: true
+  - name: cors
+    config:
+      origins: ["http://localhost:3000"]
+      methods: [GET, POST, OPTIONS]
+      headers: [Authorization, Content-Type, X-Request-ID]
+      credentials: true
+      max_age: 3600
+  - name: prometheus

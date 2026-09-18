@@ -1,0 +1,40 @@
+{
+  "_comment": "Placeholder Keycloak realm export. Generate the real one from your running Keycloak: Realm Settings -> Action -> Partial export, then replace this file. It must define: realm 'livefi', a public client 'livefi-web' (PKCE, redirect http://localhost:3000/*), and realm roles viewer/trader/admin.",
+  "realm": "livefi",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "roles": {
+    "realm": [
+      { "name": "viewer", "description": "Read-only analytics access" },
+      { "name": "trader", "description": "Can submit trades" },
+      { "name": "admin", "description": "Full platform administration" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "livefi-web",
+      "name": "LiveFi Web Dashboard",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:3000/*"],
+      "webOrigins": ["http://localhost:3000"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "demo",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "demo@livefi.local",
+      "credentials": [{ "type": "password", "value": "demo", "temporary": false }],
+      "realmRoles": ["viewer", "trader"]
+    }
+  ]
+}

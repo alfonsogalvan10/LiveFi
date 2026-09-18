@@ -1,0 +1,29 @@
+<!--
+  ClickHouse memory ceiling.
+
+  ClickHouse defaults to using a large fraction of the machine's RAM for
+  caches and query execution. Inside a container that can starve the other
+  services. On an 8GB host this is the difference between a working stack
+  and one where containers get OOM-killed during startup.
+
+  Tune via the CLICKHOUSE_MAX_MEMORY build arg or edit here.
+-->
+<clickhouse>
+    <!-- Hard ceiling for the server process (default 1.5 GB) -->
+    <max_server_memory_usage>1500000000</max_server_memory_usage>
+
+    <!-- Never use more than this fraction of the container's RAM -->
+    <max_server_memory_usage_to_ram_ratio>0.8</max_server_memory_usage_to_ram_ratio>
+
+    <!-- Shrink the in-memory caches; they are pure optimization -->
+    <mark_cache_size>268435456</mark_cache_size>
+    <uncompressed_cache_size>134217728</uncompressed_cache_size>
+
+    <!-- Limit concurrent query memory so one bad query can't take the box down -->
+    <max_memory_usage>500000000</max_memory_usage>
+    <max_memory_usage_for_user>500000000</max_memory_usage_for_user>
+
+    <!-- Reduce background merge pressure on constrained hosts -->
+    <background_pool_size>4</background_pool_size>
+    <background_schedule_pool_size>4</background_schedule_pool_size>
+</clickhouse>

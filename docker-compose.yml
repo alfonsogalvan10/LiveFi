@@ -1,0 +1,356 @@
+# ============================================================
+# LiveFi — core stack (Tiers 1-5)
+#
+# Profiles are STAGED so the platform can be brought up incrementally.
+# This matters on machines with limited RAM (the full stack needs ~7GB).
+#
+#   stage1  postgres, kafka, debezium, ingestion-api   (~2.5 GB)  write -> CDC -> Kafka
+#   stage2  + clickhouse, redis, query-api             (~3.5 GB)  + OLAP storage & reads
+#   stage3  + flink jobmanager + taskmanager           (~5.0 GB)  + stream aggregation
+#   stage4  + keycloak, kong                           (~6.0 GB)  + auth & gateway
+#   core    everything in tiers 1-5                    (~7.0 GB)  full local platform
+#
+# Examples:
+#   docker compose --profile stage1 up -d
+#   docker compose --profile core up -d
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+# ============================================================
+name: ${COMPOSE_PROJECT_NAME:-livefi}
+
+networks:
+  livefi-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  clickhouse-data:
+  redis-data:
+  kafka-data:
+  kong-data:
+  keycloak-data:
+  flink-checkpoints:
+
+services:
+  # ---------------------------------------------------------
+  # Tier 3 — OLTP system of record
+  # ---------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    profiles: [stage1, stage2, stage3, stage4, core]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Required for Debezium logical decoding
+      POSTGRES_INITDB_ARGS: "-c wal_level=${POSTGRES_WAL_LEVEL:-logical}"
+    command:
+      - postgres
+      - -c
+      - wal_level=${POSTGRES_WAL_LEVEL:-logical}
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - wal_keep_size=512MB
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [livefi-net]
+
+  # ---------------------------------------------------------
+  # Tier 4 — Event broker (KRaft, single node for local dev)
+  # ---------------------------------------------------------
+  kafka:
+    image: bitnami/kafka:3.7
+    profiles: [stage1, stage2, stage3, stage4, core]
+    restart: unless-stopped
+    environment:
+      # JVM heap is the single biggest memory consumer in this stack.
+      KAFKA_HEAP_OPTS: "${KAFKA_HEAP_OPTS:--Xmx512m -Xms256m}"
+      KAFKA_CFG_NODE_ID: "1"
+      KAFKA_CFG_PROCESS_ROLES: broker,controller
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CFG_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_CFG_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_CFG_LOG_RETENTION_HOURS: "24"
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    volumes:
+      - kafka-data:/bitnami/kafka
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+    networks: [livefi-net]
+
+  # ---------------------------------------------------------
+  # Tier 3 — CDC engine
+  # ---------------------------------------------------------
+  debezium:
+    image: debezium/connect:2.6
+    profiles: [stage1, stage2, stage3, stage4, core]
+    restart: unless-stopped
+    depends_on:
+      kafka: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    environment:
+      KAFKA_HEAP_OPTS: "${CONNECT_HEAP_OPTS:--Xmx512m -Xms256m}"
+      BOOTSTRAP_SERVERS: ${CONNECT_BOOTSTRAP_SERVERS}
+      GROUP_ID: ${CONNECT_GROUP_ID}
+      CONFIG_STORAGE_TOPIC: ${CONNECT_CONFIG_STORAGE_TOPIC}
+      OFFSET_STORAGE_TOPIC: ${CONNECT_OFFSET_STORAGE_TOPIC}
+      STATUS_STORAGE_TOPIC: ${CONNECT_STATUS_STORAGE_TOPIC}
+      CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      STATUS_STORAGE_REPLICATION_FACTOR: "1"
+      KEY_CONVERTER: ${CONNECT_KEY_CONVERTER}
+      VALUE_CONVERTER: ${CONNECT_VALUE_CONVERTER}
+    ports:
+      - "8083:8083"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8083/connectors >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [livefi-net]
+
+  # ---------------------------------------------------------
+  # Tier 5 — OLAP sink
+  # ---------------------------------------------------------
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    profiles: [stage2, stage3, stage4, core]
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./infra/clickhouse/init:/docker-entrypoint-initdb.d:ro
+      - ./infra/clickhouse/config.d:/etc/clickhouse-server/config.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q Ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [livefi-net]
+
+  # ---------------------------------------------------------
+  # Tier 5 — cache
+  # ---------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    profiles: [stage2, stage3, stage4, core]
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+      - ./infra/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [livefi-net]
+
+  # ---------------------------------------------------------
+  # Tier 4 — stream processing
+  # ---------------------------------------------------------
+  flink-jobmanager:
+    image: flink:1.19-scala_2.12-java17
+    profiles: [stage3, stage4, core]
+    restart: unless-stopped
+    command: jobmanager
+    environment: &flink-env
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        jobmanager.memory.process.size: ${FLINK_JOBMANAGER_MEMORY:-1024m}
+        parallelism.default: ${FLINK_PARALLELISM:-2}
+        state.backend.type: ${FLINK_STATE_BACKEND:-filesystem}
+        state.checkpoints.dir: ${FLINK_CHECKPOINTS_DIR}
+        execution.checkpointing.interval: ${FLINK_CHECKPOINT_INTERVAL_MS:-10000} ms
+    ports:
+      - "${FLINK_JOBMANAGER_PORT:-8084}:8081"
+    volumes:
+      - ./services/stream-processor/jobs:/opt/flink/usrlib:ro
+      - flink-checkpoints:/opt/flink/checkpoints
+    networks: [livefi-net]
+
+  flink-taskmanager:
+    image: flink:1.19-scala_2.12-java17
+    profiles: [stage3, stage4, core]
+    restart: unless-stopped
+    command: taskmanager
+    depends_on: [flink-jobmanager]
+    environment:
+      <<: *flink-env
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+        taskmanager.memory.process.size: ${FLINK_TASKMANAGER_MEMORY:-1728m}
+        state.backend.type: ${FLINK_STATE_BACKEND:-filesystem}
+        state.checkpoints.dir: ${FLINK_CHECKPOINTS_DIR}
+    volumes:
+      - flink-checkpoints:/opt/flink/checkpoints
+    networks: [livefi-net]
+
+  # ---------------------------------------------------------
+  # Tier 2 — IAM
+  # ---------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    profiles: [stage4, core]
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm", "--http-port=8080"]
+    environment:
+      JAVA_OPTS_APPEND: "${KEYCLOAK_JAVA_OPTS:--Xms64m -Xmx512m}"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "${KEYCLOAK_HTTP_PORT:-8081}:8080"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+      - ./infra/keycloak:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/health/ready >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+    networks: [livefi-net]
+
+  # ---------------------------------------------------------
+  # Tier 2 — API gateway
+  # ---------------------------------------------------------
+  kong:
+    image: kong:3.6
+    profiles: [stage4, core]
+    restart: unless-stopped
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/declarative/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
+      KONG_PLUGINS: bundled
+    ports:
+      - "${KONG_PROXY_PORT:-8000}:8000"
+      - "${KONG_ADMIN_PORT:-8001}:8001"
+    volumes:
+      - ./infra/kong/kong.yml:/kong/declarative/kong.yml:ro
+    depends_on:
+      keycloak: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "kong health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [livefi-net]
+
+  # ---------------------------------------------------------
+  # Tier 3 — ingestion API
+  # ---------------------------------------------------------
+  ingestion-api:
+    build:
+      context: ./services/ingestion-api
+    profiles: [stage1, stage2, stage3, stage4, core]
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME}-ingestion
+      LOG_LEVEL: ${LOG_LEVEL}
+    ports:
+      - "${INGESTION_SERVICE_PORT:-8080}:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [livefi-net]
+
+  # ---------------------------------------------------------
+  # Tier 5 — query API
+  # ---------------------------------------------------------
+  query-api:
+    build:
+      context: ./services/query-api
+    profiles: [stage2, stage3, stage4, core]
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST}
+      CLICKHOUSE_HTTP_PORT: ${CLICKHOUSE_HTTP_PORT}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS}
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME}-query
+      LOG_LEVEL: ${LOG_LEVEL}
+    ports:
+      - "${QUERY_SERVICE_PORT:-8001}:8080"
+    depends_on:
+      clickhouse: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [livefi-net]
+
+  # ---------------------------------------------------------
+  # Tier 1 — frontend
+  # ---------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+    profiles: [frontend]
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL}
+      NEXT_PUBLIC_KEYCLOAK_ISSUER: ${NEXT_PUBLIC_KEYCLOAK_ISSUER}
+      NEXT_PUBLIC_KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID}
+    ports:
+      - "3000:3000"
+    depends_on: [kong]
+    networks: [livefi-net]

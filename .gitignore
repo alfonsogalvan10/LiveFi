@@ -1,0 +1,50 @@
+# ---- Environment ----
+.env
+.env.local
+.env.*.local
+*.env
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# ---- Node / Next.js ----
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# ---- Java / Flink ----
+target/
+*.jar.original
+.gradle/
+
+# ---- Data & volumes ----
+data/
+volumes/
+*.log
+*.pid
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ---- Secrets / certs ----
+*.pem
+*.key
+*.crt
+!infra/**/dev-*.crt
