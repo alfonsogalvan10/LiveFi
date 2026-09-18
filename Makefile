@@ -7,7 +7,7 @@ COMPOSE_OBS := docker compose -f docker-compose.yml -f docker-compose.observabil
 
 .DEFAULT_GOAL := help
 .PHONY: help env up up-core up-observability up-frontend up-all down clean logs ps health \
-        up-stage1 up-stage2 up-stage3 up-stage4 preflight mem \
+        up-stage1 up-stage2 up-stage3 up-stage4 preflight mem ci \
         token psql clickhouse redis topics consume connectors register-connector \
         seed lint test build
 
@@ -119,6 +119,9 @@ lint: ## Lint all services
 	@echo "→ Python"; cd services/ingestion-api && ruff check . || true
 	@echo "→ Python"; cd services/query-api && ruff check . || true
 	@echo "→ Frontend"; cd frontend && pnpm lint || true
+
+ci: ## Run the same checks CI runs (lint, tests, typecheck, build, compose) — run before pushing
+	@bash ./scripts/ci.sh
 
 test: ## Run unit tests for all services
 	cd services/ingestion-api && pytest -q

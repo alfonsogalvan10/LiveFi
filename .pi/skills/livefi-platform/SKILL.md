@@ -189,6 +189,15 @@ make preflight            # verify Docker is running with enough memory
 
 Helper commands: `make mem` (per-container usage), `make psql`, `make clickhouse`, `make redis`, `make topics`, `make consume TOPIC=...`, `make connectors`, `make token`, `make seed`, `make logs`, `make down`, `make clean` (destructive).
 
+**Before pushing, always run `make ci`.** It reproduces the GitHub Actions checks locally (ruff, pytest, pnpm lint/typecheck/build, compose validation) and is far faster than waiting for a runner.
+
+### Toolchain constraints worth knowing
+
+- **pnpm is pinned** via `packageManager` in `frontend/package.json` and mirrored in CI. A mismatch between the pnpm that generated `pnpm-lock.yaml` and the one CI uses breaks `--frozen-lockfile`.
+- **pnpm 10+ blocks postinstall scripts** by default. Packages needing native builds must be approved in `frontend/pnpm-workspace.yaml` under `allowBuilds`. `pnpm install` fails with `ERR_PNPM_IGNORED_BUILDS` otherwise. Use `pnpm approve-builds` rather than hand-editing.
+- **Both Python services pin the same ruff rule set** in their own `pyproject.toml`. These are duplicated deliberately (each service stays independently buildable) — keep them in sync.
+- **A wildcard in a block comment is a bug.** The two-character sequence `*` `/` terminates a block comment early; the rest of the line is then parsed as code. Never write a glob like `services/<name>/app/schemas` with a literal asterisk in a TS/Python block comment.
+
 **In stages 1-3 there is no Kong or Keycloak**, so `make seed` cannot fetch a token. Post straight to the ingestion service instead:
 
 ```bash

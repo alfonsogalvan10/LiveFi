@@ -23,6 +23,7 @@ The architecture follows a **CDC → Stream → OLAP** pattern: writes land in P
 - [Configuration](#configuration)
 - [Observability](#observability)
 - [Local Development (without Docker)](#local-development-without-docker)
+- [Before You Push](#before-you-push)
 - [Roadmap](#roadmap)
 
 ---
@@ -491,6 +492,41 @@ pnpm dev
 
 ---
 
+## Before You Push
+
+CI runs on every push and pull request. Run the same checks locally first — it is far faster than waiting for a GitHub runner to tell you something is broken:
+
+```bash
+make ci
+```
+
+That executes:
+
+| Check | What it catches |
+|---|---|
+| `ruff check` (both services) | Python lint and import-order problems |
+| `pytest` (both services) | Broken logic and failed assertions |
+| `pnpm install --frozen-lockfile` | A `package.json` change with a stale lockfile |
+| `pnpm lint` | ESLint violations |
+| `pnpm typecheck` | TypeScript type errors |
+| `pnpm build` | Next.js build failures |
+| `docker compose config` | Malformed compose files, across all profiles |
+
+The first run creates virtualenvs under `.venv-ci/` (gitignored) and installs dependencies, so it takes a couple of minutes. Later runs are fast.
+
+Skip slow parts while iterating:
+
+```bash
+SKIP_FRONTEND=1 make ci     # Python + compose only
+SKIP_BUILD=1 make ci        # frontend lint/typecheck without the build
+SKIP_PYTHON=1 make ci
+SKIP_COMPOSE=1 make ci
+```
+
+**If CI fails on `--frozen-lockfile`**, your `package.json` and `pnpm-lock.yaml` disagree. Run `cd frontend && pnpm install` locally and commit the updated lockfile.
+
+---
+
 ## Roadmap
 
 - [ ] Replace single-broker Kafka with a 3-broker KRaft cluster
@@ -505,4 +541,4 @@ pnpm dev
 
 ## License
 
-Proprietary / TBD.
+MIT — see [LICENSE](LICENSE).

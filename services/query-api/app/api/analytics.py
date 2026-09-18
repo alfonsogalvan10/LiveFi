@@ -1,7 +1,7 @@
 """Analytics read endpoints (ClickHouse + Redis cache-aside)."""
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query
 
@@ -23,7 +23,7 @@ async def get_ohlc(
     if (hit := await cached(key)) is not None:
         return {"cached": True, "symbol": symbol, "candles": hit}
 
-    since = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    since = datetime.now(UTC) - timedelta(minutes=minutes)
     rows = clickhouse.query(
         """
         SELECT window_start,
@@ -53,7 +53,7 @@ async def get_volume(
     if (hit := await cached(key)) is not None:
         return {"cached": True, "symbol": symbol, "buckets": hit}
 
-    since = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    since = datetime.now(UTC) - timedelta(minutes=minutes)
     rows = clickhouse.query(
         """
         SELECT window_start, buy_volume, sell_volume, net_volume

@@ -5,23 +5,35 @@ on:
     branches: [main]
   pull_request:
 
+# Cancel superseded runs on the same ref — saves CI minutes on rapid pushes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   python-services:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false          # report every service's result, not just the first failure
       matrix:
         service: [ingestion-api, query-api]
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: services/${{ matrix.service }}/requirements.txt
+
       - name: Install dependencies
         working-directory: services/${{ matrix.service }}
         run: pip install -r requirements.txt
+
       - name: Lint
         working-directory: services/${{ matrix.service }}
         run: ruff check .
+
       - name: Test
         working-directory: services/${{ matrix.service }}
         run: pytest -q
@@ -30,16 +42,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Reads the version from "packageManager" in frontend/package.json.
+      # Keep that field and this pin in sync — a mismatch between the pnpm
+      # that generated pnpm-lock.yaml and the one in CI breaks --frozen-lockfile.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: corepack enable
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
       - name: Install
         working-directory: frontend
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        working-directory: frontend
+        run: pnpm lint
+
       - name: Typecheck
         working-directory: frontend
         run: pnpm typecheck
+
       - name: Build
         working-directory: frontend
         run: pnpm build
@@ -48,8 +76,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate docker-compose
+
+      - name: Prepare env file
+        run: cp .env.example .env
+
+      # `docker compose config` only parses and resolves the file — it does not
+      # contact a daemon, so this job is fast and needs no running Docker.
+      - name: Validate core compose file
+        run: docker compose -f docker-compose.yml config -q
+
+      - name: Validate merged observability compose file
+        run: docker compose -f docker-compose.yml -f docker-compose.observability.yml config -q
+
+      - name: Validate every stage profile
         run: |
-          cp .env.example .env
-          docker compose -f docker-compose.yml config >/dev/null
-          docker compose -f docker-compose.yml -f docker-compose.observability.yml config >/dev/null
+          for profile in stage1 stage2 stage3 stage4; do
+            echo "checking profile: $profile"
+            docker compose --profile "$profile" config -q
+          done

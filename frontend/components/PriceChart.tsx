@@ -3,30 +3,21 @@
 import { useEffect, useRef } from 'react';
 import { createChart, type IChartApi, type UTCTimestamp } from 'lightweight-charts';
 
-export interface Candle {
-  window_start: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
+import type { Candle } from '@/lib/types';
 
 export function PriceChart({ candles }: { candles: Candle[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || candles.length === 0) return;
 
-    const chart = createChart(containerRef.current, {
+    const chart: IChartApi = createChart(containerRef.current, {
       layout: { background: { color: 'transparent' }, textColor: '#94a3b8' },
       grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
       rightPriceScale: { borderColor: '#334155' },
       timeScale: { borderColor: '#334155', timeVisible: true },
       height: 420,
     });
-    chartRef.current = chart;
 
     const series = chart.addCandlestickSeries({
       upColor: '#16a34a',
@@ -55,7 +46,6 @@ export function PriceChart({ candles }: { candles: Candle[] }) {
     return () => {
       window.removeEventListener('resize', onResize);
       chart.remove();
-      chartRef.current = null;
     };
   }, [candles]);
 

@@ -1,11 +1,11 @@
 [project]
-name = "livefi-ingestion-api"
+name = "livefi-query-api"
 version = "0.1.0"
-description = "LiveFi ingestion microservice — validates and persists trades to PostgreSQL"
+description = "LiveFi query microservice — cached OLAP analytics for the dashboard"
 requires-python = ">=3.11"
 
 # Lint config is duplicated (not shared) so each service stays independently
-# buildable and deployable. Keep the two files in sync with query-api.
+# buildable and deployable. Keep the two files in sync.
 [tool.ruff]
 line-length = 100
 target-version = "py311"

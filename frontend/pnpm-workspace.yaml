@@ -1,0 +1,18 @@
+# pnpm configuration.
+#
+# As of pnpm 10+, settings moved out of the "pnpm" field in package.json and
+# into this file. The exact shape changed again in pnpm 12.
+#
+# allowBuilds: pnpm blocks package postinstall scripts by default as a
+# supply-chain safety measure — a compromised dependency cannot run arbitrary
+# code on your machine during `pnpm install`. Packages that legitimately need
+# to compile native code must be approved here, or install fails with
+# ERR_PNPM_IGNORED_BUILDS.
+#
+# unrs-resolver ships a native binary (used by the ESLint import resolver).
+# Without its postinstall step, `pnpm lint` cannot resolve modules.
+#
+# Manage this with `pnpm approve-builds` rather than editing by hand.
+
+allowBuilds:
+  unrs-resolver: true

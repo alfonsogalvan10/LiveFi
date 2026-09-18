@@ -1,16 +1,18 @@
 'use client';
 
 import useSWR from 'swr';
+
 import { PriceChart } from '@/components/PriceChart';
+import { getOhlc } from '@/lib/api';
+import type { OhlcResponse, StreamMessage } from '@/lib/types';
 import { useLiveStream } from '@/lib/useLiveStream';
-import { apiFetch } from '@/lib/api';
 
 const SYMBOL = 'AAPL';
 
 export default function DashboardPage() {
-  const { data, error, isLoading } = useSWR(
+  const { data, error, isLoading } = useSWR<OhlcResponse>(
     `/analytics/ohlc?symbol=${SYMBOL}&minutes=120`,
-    apiFetch,
+    () => getOhlc(SYMBOL, 120),
     { refreshInterval: 5000 },
   );
 
@@ -32,10 +34,12 @@ export default function DashboardPage() {
       {isLoading && <p className="text-slate-400">Loading candles…</p>}
       {error && <p className="text-down">Failed to load analytics.</p>}
 
-      {data?.candles?.length > 0 && <PriceChart candles={data.candles} />}
+      {data && data.candles.length > 0 && <PriceChart candles={data.candles} />}
 
-      <pre className="rounded-lg border border-slate-800 bg-slate-900 p-4 text-xs text-slate-400">
-        {lastMessage ? JSON.stringify(lastMessage, null, 2) : 'Waiting for live updates…'}
+      <pre className="max-h-64 overflow-auto rounded-lg border border-slate-800 bg-slate-900 p-4 text-xs text-slate-400">
+        {lastMessage
+          ? JSON.stringify(lastMessage as StreamMessage, null, 2)
+          : 'Waiting for live updates…'}
       </pre>
     </section>
   );

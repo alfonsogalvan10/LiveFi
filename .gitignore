@@ -37,6 +37,9 @@ volumes/
 *.log
 *.pid
 
+# ---- Local CI venvs (created by scripts/ci.sh) ----
+.venv-ci/
+
 # ---- IDE / OS ----
 .idea/
 .vscode/
