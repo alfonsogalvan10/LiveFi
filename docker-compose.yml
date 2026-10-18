@@ -148,6 +148,37 @@ services:
     networks: [livefi-net]
 
   # ---------------------------------------------------------
+  # Tier 3 — external market data collector
+  #
+  # Polls a public exchange REST API and INSERTs candles into PostgreSQL.
+  # It deliberately has NO Kafka client: Debezium produces the CDC topic from
+  # the WAL, exactly as it does for trades. See the design rules.
+  #
+  # Its own profile, so a flaky external API can never affect stage 1.
+  #   make up-collector  =>  --profile stage1 --profile collector
+  # ---------------------------------------------------------
+  market-data-collector:
+    build:
+      context: ./services/market-data-collector
+    profiles: [collector]
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      BINANCE_BASE_URL: ${BINANCE_BASE_URL:-https://data-api.binance.vision}
+      MARKET_DATA_SYMBOLS: ${MARKET_DATA_SYMBOLS:-BTCUSDT,ETHUSDT,SOLUSDT}
+      MARKET_DATA_INTERVAL: ${MARKET_DATA_INTERVAL:-1m}
+      MARKET_DATA_LOOKBACK: ${MARKET_DATA_LOOKBACK:-2}
+      MARKET_DATA_POLL_SECONDS: ${MARKET_DATA_POLL_SECONDS:-30}
+      LOG_LEVEL: ${LOG_LEVEL}
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [livefi-net]
+
+  # ---------------------------------------------------------
   # Tier 5 — OLAP sink
   # ---------------------------------------------------------
   clickhouse:

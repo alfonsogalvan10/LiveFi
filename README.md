@@ -98,7 +98,8 @@ The platform is organized into six tiers. Each tier is independently scalable an
   │    └─ Executes stateful windowed joins & risk computations
   └─ Apache Kafka Cluster (Port 9092 - Event Broker)
        ├─ Topics: dbserver.public.trades (CDC Stream)
-       └─ Topics: market.prices.live (External Feeds Stream)
+       ├─ Topics: dbserver.public.market_prices (CDC Stream)
+       └─ Topics: analytics.ohlc, analytics.risk (Computed Outputs)
 
 ─────────────────────────────────────────────────────────────
 [ OBSERVABILITY & TELEMETRY LAYER ] (Scrapes all components above)
@@ -332,17 +333,42 @@ Each stage is a **superset** of the previous one. Start them in order and stop w
 
 ```bash
 make preflight    # confirm Docker has >= 4 GB
-make up-stage1
+make up-stage1    # containers + topics + CDC connector, then verifies all three
 
-# Verify the CDC pipeline before adding anything else
-bash infra/debezium/register-postgres-connector.sh
 SKIP_AUTH=1 API_URL=http://localhost:8080 make seed
 make consume TOPIC=dbserver.public.trades
 
 make up-stage2    # then 3, then 4, when you have room
 ```
 
+Stage 1 is the only stage with setup steps: it creates the Kafka topics and registers
+the Debezium connector, and stops with an error if either fails. Topics are created
+*before* the connector on purpose — Kafka auto-creates topics, so registering first
+would yield a 1-partition `dbserver.public.trades` instead of the 3 in `.env`.
+Use `make stage1-containers` if you want the containers without any of that.
+
 Run `make mem` at any point to see actual per-container usage.
+
+### Ingesting real market data
+
+The `market-data-collector` service polls a public exchange REST API and writes candles
+into PostgreSQL. It has no Kafka client: Debezium produces the CDC topic from the WAL,
+so this is the exact same path trades take.
+
+```bash
+make up-collector    # stage 1 + the collector (~2.6 GB)
+make prices          # the 10 most recent candles
+make watch-prices    # the same rows arriving as CDC events
+```
+
+It runs under its own `collector` profile so a flaky or blocked external API can never
+affect stage 1. Configure it with `BINANCE_BASE_URL`, `MARKET_DATA_SYMBOLS`,
+`MARKET_DATA_INTERVAL`, and `MARKET_DATA_POLL_SECONDS` in `.env`.
+
+The collector **discards the final candle in every response**, because that candle is
+still forming. Persisting it would freeze a partial value permanently, since inserts are
+`ON CONFLICT DO NOTHING`. Dropping it means the write path is strictly insert-only,
+which is why `market_prices` needs no version column.
 
 **Set Docker Desktop to 4 GB:** Settings → Resources → Memory. On an 8 GB machine, giving Docker more than that starves macOS itself.
 
@@ -414,7 +440,7 @@ curl -sS http://localhost:8000/analytics/ohlc?symbol=AAPL \
 | Topic | Producer | Consumer | Payload |
 |---|---|---|---|
 | `dbserver.public.trades` | Debezium | Flink | CDC envelope of a `trades` row |
-| `market.prices.live` | External feed ingest | Flink | Normalized tick/quote |
+| `dbserver.public.market_prices` | Debezium | Flink | CDC envelope of a `market_prices` row |
 | `analytics.ohlc` | Flink | Query API / ClickHouse sink | 1s/1m OHLC rollups |
 | `analytics.risk` | Flink | Query API / ClickHouse sink | Portfolio risk snapshots |
 | `_connect-configs`, `_connect-offsets`, `_connect-status` | Kafka Connect | Kafka Connect | Internal Connect state |
@@ -430,7 +456,7 @@ curl -sS http://localhost:8000/analytics/ohlc?symbol=AAPL \
 3. **Authorize.** Kong's JWT plugin verifies the signature against Keycloak's JWKS, checks scopes/rate limits, and proxies the request to the ingestion service.
 4. **Persist.** FastAPI validates the payload with Pydantic and commits a single row into PostgreSQL.
 5. **Capture.** Debezium, tailing PostgreSQL's logical replication slot, emits a change event to `dbserver.public.trades`.
-6. **Enrich & compute.** Flink joins the trade stream against `market.prices.live`, applies event-time tumbling windows, computes OHLC/volume/risk, and emits results.
+6. **Enrich & compute.** Flink joins the trade stream against `dbserver.public.market_prices`, applies event-time tumbling windows, computes OHLC/volume/risk, and emits results.
 7. **Sink.** Flink writes aggregates into ClickHouse (`ReplacingMergeTree`) and publishes a lightweight notification.
 8. **Serve.** The Query API serves reads from Redis (hot path) falling back to ClickHouse (cold path), exposing REST and WebSocket endpoints.
 9. **Visualize.** The dashboard renders charts and live-updates via WebSocket.

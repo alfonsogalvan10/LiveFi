@@ -1,0 +1,32 @@
+# Keep the build context minimal and prevent secrets from ever
+# being copied into an image layer.
+.git
+.gitignore
+.gitattributes
+.env
+.env.*
+*.env
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+htmlcov/
+.coverage
+
+# Tests and docs aren't needed at runtime
+tests/
+*.md
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# CI
+.github/

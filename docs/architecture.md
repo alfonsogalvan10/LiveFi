@@ -32,7 +32,7 @@ Companion document to the top-level [`README.md`](../README.md). This file holds
 - Kafka is the **durable buffer and ordering authority**; nothing downstream is on the write critical path.
 - Flink jobs use **event-time processing with watermarks** and a bounded out-of-orderness allowance, so late ticks are handled deterministically.
 - Checkpointing is enabled (10s interval) with state stored in a filesystem backend locally and S3 in production.
-- Two source streams (`trades` CDC and `market.prices.live`) are keyed by `symbol` and joined in a windowed interval join.
+- Two source streams (`trades` CDC and `market_prices` CDC) are keyed by `symbol` and joined in a windowed interval join. Both are produced by Debezium from the PostgreSQL WAL — there is no direct-to-Kafka producer anywhere in the pipeline.
 
 ### Tier 5 — Analytics Storage & Serving Layer
 - ClickHouse tables use `ReplacingMergeTree` with a version column so Flink can emit idempotent, at-least-once updates.

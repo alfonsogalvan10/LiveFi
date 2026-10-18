@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false          # report every service's result, not just the first failure
       matrix:
-        service: [ingestion-api, query-api]
+        service: [ingestion-api, query-api, market-data-collector]
     steps:
       - uses: actions/checkout@v4
 

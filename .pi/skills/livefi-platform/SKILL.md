@@ -42,7 +42,7 @@ The architecture separates write, compute, and read paths so each can fail and s
 |---|---|---|
 | 1. Client | Next.js, React, Tailwind, TradingView Charts | Dashboard UI, auth flow, WebSocket consumption |
 | 2. Edge | Kong Gateway, Keycloak | Single public entrypoint; JWT validation, rate limiting, routing |
-| 3. Ingestion | FastAPI, PostgreSQL 15, Debezium | Validate + persist writes; emit CDC events from the WAL |
+| 3. Ingestion | FastAPI, PostgreSQL 15, Debezium, market-data-collector | Validate + persist writes; poll external market data; emit CDC events from the WAL |
 | 4. Streaming | Apache Kafka, Apache Flink | Durable event log; stateful windowed aggregation |
 | 5. Serving | ClickHouse, Redis, FastAPI | OLAP storage, cache-aside reads, WebSocket push |
 | 6. Observability | OTel Collector, Prometheus, Jaeger, Grafana | Metrics, traces, alerts, dashboards |
@@ -54,12 +54,14 @@ The architecture separates write, compute, and read paths so each can fail and s
 ```
 Browser → Kong (verify JWT) → Ingestion API → PostgreSQL
                                                    │ WAL
+Binance (public REST) ──> market-data-collector ──>│ WAL
                                                    ▼
                                                Debezium
                                                    │ CDC
                                                    ▼
                             Kafka ◄───────────────┘
-                              │  topic: dbserver.public.trades
+                              │  topics: dbserver.public.trades
+                              │          dbserver.public.market_prices
                               ▼
                             Flink  (keyBy symbol → 1-min tumbling window → OHLCV)
                               │
@@ -151,7 +153,7 @@ New FastAPI services must match this structure. Configuration is read from envir
 - Debezium connector registration script (idempotent)
 - ClickHouse OLAP schema with `ReplacingMergeTree` tables and a materialized view
 - Kong declarative routing with JWT + rate limiting + CORS + correlation ID
-- Both FastAPI services with working handlers, health probes, tests, and telemetry
+- Both FastAPI services plus the market-data collector, with working handlers, health probes, and tests
 - Flink OHLC job (complete) and risk job (state accumulation is a stub)
 - Observability pipeline with tail sampling and alert rules
 - Makefile, bootstrap/seed/teardown scripts, CI workflow
@@ -187,7 +189,13 @@ make preflight            # verify Docker is running with enough memory
 | `make up-core` | tiers 1-5 in one go | ~7.0 GB |
 | `make up-observability` | tier 6 (merged file, separate profile) | +1 GB |
 
-Helper commands: `make mem` (per-container usage), `make psql`, `make clickhouse`, `make redis`, `make topics`, `make consume TOPIC=...`, `make connectors`, `make token`, `make seed`, `make logs`, `make down`, `make clean` (destructive).
+**Stage 1 is the only stage with setup steps.** `make up-stage1` runs `scripts/stage1-up.sh`:
+waits for health, creates the Kafka topics, registers the Debezium connector, and fails loudly
+if any step does not verify. Topics are created *before* registration on purpose — Kafka
+auto-creates topics, so registering first yields a 1-partition `dbserver.public.trades`
+instead of the 3 partitions in `.env`. `make stage1-containers` skips the wiring.
+
+Helper commands: `make mem` (per-container usage), `make psql`, `make clickhouse`, `make redis`, `make topics`, `make consume TOPIC=...`, `make connectors`, `make token`, `make seed`, `make up-collector`, `make prices`, `make watch-prices`, `make logs`, `make down`, `make clean` (destructive).
 
 **Before pushing, always run `make ci`.** It reproduces the GitHub Actions checks locally (ruff, pytest, pnpm lint/typecheck/build, compose validation) and is far faster than waiting for a runner.
 

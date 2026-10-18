@@ -14,9 +14,14 @@ KAFKA_BIN := /opt/kafka/bin
 # separate line and silently becomes an empty value.
 CDC_TOPIC ?= dbserver.public.trades
 
+# Topic Debezium produces from the market_prices table. Keep in sync with
+# `table.include.list` in infra/debezium/register-postgres-connector.sh.
+PRICES_TOPIC ?= dbserver.public.market_prices
+
 .DEFAULT_GOAL := help
 .PHONY: help env up up-core up-observability up-frontend up-all down clean logs ps health \
-        up-stage1 up-stage2 up-stage3 up-stage4 preflight mem ci \
+        up-stage1 stage1-containers up-stage2 up-stage3 up-stage4 preflight mem ci \
+        up-collector prices watch-prices \
         token psql sql count slot clickhouse redis topics init-topics watch consume connectors register-connector \
         seed lint test build
 
@@ -38,7 +43,10 @@ mem: ## Show memory + CPU usage per container (useful on low-RAM machines)
 # ---------------- Staged startup ----------------
 # Each stage is a superset of the previous one. Start them in order and
 # stop whenever your machine runs out of headroom.
-up-stage1: env ## Stage 1: postgres+kafka+debezium+ingestion (~2.5 GB) — the CDC pipeline
+up-stage1: env ## Stage 1: containers + topics + CDC connector, verified (~2.5 GB)
+	@bash ./scripts/stage1-up.sh
+
+stage1-containers: env ## Stage 1 containers only — no topics or connector setup
 	$(COMPOSE) --profile stage1 up -d
 	@echo ""
 	@echo "Stage 1 running. Verify the write -> WAL -> CDC -> Kafka path:"
@@ -74,10 +82,10 @@ up: up-core up-observability ## Start everything except frontend
 up-all: up-core up-observability up-frontend ## Start the whole platform
 
 down: ## Stop containers (keeps volumes)
-	$(COMPOSE_OBS) --profile core --profile observability --profile frontend down
+	$(COMPOSE_OBS) --profile core --profile observability --profile frontend --profile collector down
 
 clean: ## Stop containers AND delete all volumes/data
-	$(COMPOSE_OBS) --profile core --profile observability --profile frontend down -v
+	$(COMPOSE_OBS) --profile core --profile observability --profile frontend --profile collector down -v
 	@echo "All volumes removed."
 
 logs: ## Tail logs for all services
@@ -132,6 +140,18 @@ consume: ## Tail a specific topic: make consume TOPIC=dbserver.public.trades
 	@test -n "$(TOPIC)" || (echo "✗ TOPIC is empty — nothing to consume."; echo "  Either: make consume TOPIC=dbserver.public.trades"; echo "  Or just: make watch   (no arguments needed)"; exit 1)
 	-$(COMPOSE) exec kafka $(KAFKA_BIN)/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic $(TOPIC) --from-beginning
 
+watch-prices: ## Tail the market data CDC stream (Ctrl+C to stop)
+	@echo "Tailing topic: $(PRICES_TOPIC)  (Ctrl+C to stop)"
+	@echo ""
+	-$(COMPOSE) exec kafka $(KAFKA_BIN)/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic $(PRICES_TOPIC) --from-beginning
+
+prices: ## Show recent market_prices rows
+	@$(COMPOSE) exec -T postgres psql -U $${POSTGRES_USER:-livefi} -d $${POSTGRES_DB:-livefi} -c "SELECT symbol, timeframe, open_time, close, volume FROM market_prices ORDER BY open_time DESC LIMIT 10;"
+
+up-collector: env ## Start the market data collector (polls the exchange into Postgres)
+	$(COMPOSE) --profile stage1 --profile collector up -d
+	@echo "→ Rows appear in Postgres, then on the CDC topic. Check with: make prices && make watch-prices"
+
 connectors: ## List Debezium connectors and their status
 	@curl -sS http://localhost:8083/connectors?expand=status | jq
 
@@ -145,6 +165,7 @@ seed: ## Generate synthetic market data and trades
 lint: ## Lint all services
 	@echo "→ Python"; cd services/ingestion-api && ruff check . || true
 	@echo "→ Python"; cd services/query-api && ruff check . || true
+	@echo "→ Python"; cd services/market-data-collector && ruff check . || true
 	@echo "→ Frontend"; cd frontend && pnpm lint || true
 
 ci: ## Run the same checks CI runs (lint, tests, typecheck, build, compose) — run before pushing
@@ -153,6 +174,7 @@ ci: ## Run the same checks CI runs (lint, tests, typecheck, build, compose) — 
 test: ## Run unit tests for all services
 	cd services/ingestion-api && pytest -q
 	cd services/query-api && pytest -q
+	cd services/market-data-collector && pytest -q
 
 build: ## Build all custom Docker images
 	$(COMPOSE) build

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # ============================================================
 # LiveFi — synthetic data generator.
-# Emits random trades through the gateway and market ticks to Kafka.
+# Emits random trades through the ingestion API.
 # ============================================================
 set -euo pipefail
 
 API_URL="${API_URL:-http://localhost:8000}"
 RATE="${RATE:-5}"          # trades per second
 DURATION="${DURATION:-60}" # seconds
-SYMBOLS=(AAPL MSFT GOOGL TSLA BTC-USD)
+SYMBOLS=(BTCUSDT ETHUSDT SOLUSDT)
 
 # SKIP_AUTH=1 posts straight to the ingestion service without a token.
 # Use this in stage 1/2/3 where Kong and Keycloak are not running yet:
@@ -48,8 +48,13 @@ while [ "$(date +%s)" -lt "$end" ]; do
   qty=$(( (RANDOM % 500) + 1 ))
   price=$(awk -v s="$(echo "scale=2; 50 + $RANDOM % 400" | bc)" 'BEGIN{printf "%.2f", s}')
 
+  # `${AUTH_HEADER[@]+...}` rather than `"${AUTH_HEADER[@]}"`: on bash 3.2
+  # (what macOS ships) expanding an EMPTY array under `set -u` aborts with
+  # "AUTH_HEADER[@]: unbound variable". The `+` form expands to nothing when
+  # the array is empty and to the quoted elements when it is not. The same
+  # caveat is documented at the top of scripts/ci.sh.
   curl -sS -o /dev/null -X POST "$API_URL/trades" \
-    "${AUTH_HEADER[@]}" \
+    "${AUTH_HEADER[@]+"${AUTH_HEADER[@]}"}" \
     -H "Content-Type: application/json" \
     -d "{\"idempotency_key\":\"$(uuidgen | tr '[:upper:]' '[:lower:]')\",\"symbol\":\"$symbol\",\"side\":\"$side\",\"quantity\":$qty,\"price\":$price,\"source\":\"seed\"}" \
     && count=$((count + 1))

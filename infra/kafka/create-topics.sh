@@ -13,8 +13,7 @@ KAFKA_TOPICS="${KAFKA_BIN:-/opt/kafka/bin}/kafka-topics.sh"
 
 TOPICS=(
   "dbserver.public.trades"
-  "dbserver.public.risk_snapshots"
-  "market.prices.live"
+  "dbserver.public.market_prices"
   "analytics.ohlc"
   "analytics.risk"
   "livefi.dlq"

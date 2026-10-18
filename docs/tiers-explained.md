@@ -274,8 +274,8 @@ That produces an **OHLC candle** — the standard unit of a price chart. Flink d
 
 | Topic | Direction | Content |
 |---|---|---|
-| `dbserver.public.trades` | in | CDC events from PostgreSQL |
-| `market.prices.live` | in | External market price feed |
+| `dbserver.public.trades` | in | CDC events from the `trades` table |
+| `dbserver.public.market_prices` | in | CDC events from the `market_prices` table |
 | `analytics.ohlc` | out | Computed candles |
 | `analytics.risk` | out | Portfolio risk snapshots |
 | `livefi.dlq` | out | Dead-letter queue for malformed events |
@@ -472,7 +472,7 @@ Kafka, Flink, ClickHouse, and Keycloak together will exhaust Docker Desktop's de
 1. **Set Docker Desktop to 4 GB** (Settings → Resources → Memory) and use the staged profiles:
    ```bash
    make preflight     # checks Docker is up and reports its memory
-   make up-stage1     # ~2.5 GB — postgres, kafka, debezium, ingestion
+   make up-stage1     # ~2.5 GB — postgres, kafka, debezium, ingestion + topics & CDC connector
    make up-stage2     # ~3.5 GB — + clickhouse, redis, query-api
    make mem           # see actual per-container usage
    ```

@@ -40,7 +40,7 @@ if [ "${SKIP_PYTHON:-0}" != "1" ]; then
     step "Python services"
     fail "no Python >= 3.11 found (try: brew install python@3.12)"
   else
-    for service in ingestion-api query-api; do
+    for service in ingestion-api query-api market-data-collector; do
       step "Python: $service  (interpreter: $PYTHON)"
       VENV=".venv-ci/$service"
       STAMP="$VENV/.requirements.sha"
@@ -143,6 +143,14 @@ if [ "${SKIP_COMPOSE:-0}" != "1" ]; then
       fail "profile: $profile"
     fi
   done
+
+  # The collector needs stage1 alongside it: it depends on postgres, which is
+  # not in its own profile, so `--profile collector` alone is an invalid project.
+  if docker compose --profile stage1 --profile collector config -q 2>/dev/null; then
+    pass "profiles: stage1 + collector"
+  else
+    fail "profiles: stage1 + collector"
+  fi
 fi
 
 # ------------------------------------------------------------

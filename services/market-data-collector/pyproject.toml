@@ -1,0 +1,21 @@
+[project]
+name = "livefi-market-data-collector"
+version = "0.1.0"
+description = "LiveFi market data collector — polls a public exchange API and persists candles to PostgreSQL"
+requires-python = ">=3.11"
+
+# Lint config is duplicated (not shared) so each service stays independently
+# buildable and deployable. Keep the three files in sync.
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# BLE  = flake8-blind-except — flags bare `except Exception`, which is why
+#        deliberate broad catches carry an explicit `# noqa: BLE001`.
+# ASYNC = flake8-async — catches blocking calls inside async functions.
+select = ["E", "F", "I", "UP", "B", "BLE", "ASYNC"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
